@@ -1,0 +1,236 @@
+(load "prekode3a.scm")
+
+;; Oblig 3a
+;; Magnus Remmem & Jonatan Hafell Budalen
+
+;; (1a)
+
+(define (list-to-stream lst)
+  (let ((stream
+         (if (null? lst)
+             the-empty-stream
+             (cons-stream
+              (car lst)
+              (list-to-stream (cdr lst))))))
+    stream))
+
+(define (stream-to-list stream . args)
+  (let ((lst
+         (if (stream-null? stream)
+             '()
+             (cond ((null? args)
+                    (cons (stream-car stream) (stream-to-list (stream-cdr stream))))
+                   ((> (car args) 0)
+                    (cons (stream-car stream) (stream-to-list (stream-cdr stream) (- (car args) 1))))
+                   (else '())))))
+    lst))
+
+;; (1b)
+
+;; test streams
+(define stream1 (list-to-stream '(1 2 3)))
+(define stream2 (list-to-stream '(4 5 6 7)))
+
+(define (stream-map proc . argstreams)
+  (if (equal? #t (streams-null? argstreams))
+      the-empty-stream
+      (cons-stream
+       (apply proc
+              (map stream-car argstreams))
+       (apply stream-map
+              (cons proc (map stream-cdr argstreams))))))
+
+(define (streams-null? . argstreams)
+  (if (equal? '(()) argstreams)
+      #f
+      (if (stream-null? (caar argstreams))
+          #t
+          (streams-null? (cdar argstreams)))))
+
+;; Tester kjøring av stream-map med to streams med ulike lengder
+(define mapped-stream (stream-map * stream1 stream2))
+mapped-stream
+(show-stream mapped-stream)
+
+;; (1c)
+
+;; Problemet er at han ikke har tatt hensyn til uendelige strømmer. ------------------
+
+;; (1d)
+
+(define (show x)
+  (display x)
+  (newline)
+  x)
+
+(define x
+  (stream-map show
+              (stream-interval 0 10)))
+
+;; (define x (stream-map show (stream-interval 0 10))) gir 0
+;; (stream-ref x 5) gir 1 2 3 4 5 5
+;; (stream-ref x 7) gir 6 7 7
+;; stream-interval delayer tallene mellom 0 og 10 med cons-stream og stream-ref x 5 forcer ut
+;; tallene som har blitt delayed opp til 5 med stream-cdr, stream-ref x 7 tar tallene opp til 7, men
+;; ikke 0 1 2 3 4 5 fordi de er allerede blitt forced ut.
+
+;; (2a)
+
+(define (make-lm)
+  (list '*language-model*))
+
+(define (lm-lookup-bigram lm string1 string2)
+  (let ((word
+         (assoc2 string1 (cdr lm))))
+    (if word
+        (let ((record
+               (assoc string2 (cdr word))))
+          (if record
+              (cdr record)
+              #f))
+        #f)))
+
+(define (lm-lookup-word-count lm string)
+  (cdar (assoc2 string (cdr lm))))
+
+(define (lm-record-bigram! lm string1 string2)
+  (let ((word (assoc2 string1 (cdr lm))))
+    (if word
+        (let ((record (assoc string2 (cdr word))))
+          (set-cdr! (car word) (+ (cdar word) 1))
+          (if record
+              (set-cdr! record (+ (cdr record) 1))
+              (set-cdr! word
+                        (cons (cons string2 1)
+                              (cdr word)))))
+        (set-cdr! lm
+                 (cons (list (cons string1 1)
+                             (cons string2 1))
+                       (cdr lm))))))
+
+(define (assoc2 key records)
+  (cond ((null? records) #f)
+        ((equal? key (caaar records)) (car records))
+        (else (assoc2 key (cdr records)))))
+
+;; (2b)
+
+(define brown (read-corpus "brown.txt"))
+  
+(define (lm-train! lm text)
+  (define (traverse-sentence sentence)
+    (if (null? (cdr sentence))
+        (lm-train! lm (cdr text))
+        (let ((string1 (car sentence))
+              (string2 (cadr sentence)))
+          (lm-record-bigram! lm string1 string2)
+          (traverse-sentence (cdr sentence)))))
+  (if (null? text)
+      '"text done"
+      (traverse-sentence (car text))))
+
+;; (2c)
+
+(define (lm-estimate! lm)
+  (define (estimate pairing count)
+    (if (null? pairing)
+        (lm-estimate! (cdr lm))
+        (let ((estimation (/ (cdar pairing) count)))
+          (set-cdr! (car pairing) estimation)
+          (estimate (cdr pairing) count))))
+  (if (null? (cdr lm))
+      '"all done bruh"
+      (estimate (cdadr lm) (cdaadr lm)))) ;; Skrive forklaring her kanskje??
+
+;; (2d)
+
+(define test-file (read-corpus "test.txt"))
+
+;; Vi vet at denne inkluderer <s> og </s>, men det spiller liten rolle i forhold til "fall-back".
+(define (lm-fall-back lm) 
+  (define (count lm sum)
+    (if (null? (cdr lm))
+        (/ 1 sum)
+        (count (cdr lm) (+ sum (cdaadr lm)))))
+  (count lm 0))
+
+(define (lm-score lm sentence)
+  (define (calculate sentence total-score)
+    (if (null? (cdr sentence))
+        total-score
+        (let ((score (lm-lookup-bigram lm (car sentence) (cadr sentence))))
+          (if score
+              (calculate (cdr sentence) (* total-score score))
+              (calculate (cdr sentence) (* total-score (lm-fall-back lm)))))))
+  (calculate sentence 1))
+
+(define (lm-scores lm text)
+  (cond ((null? text)
+         'done)
+        (else
+         (display (lm-score lm (car text)))
+         (newline)
+         (lm-scores lm (cdr text)))))
+
+;; Størst sjanse for setning nr 10 og minst sjanse for setning nr 9.
+
+;; (2e)
+
+(define wsj (read-corpus "wsj.txt"))
+
+(define (entry tree) (car tree))
+(define (left-branch tree) (cadr tree))
+(define (right-branch tree) (caddr tree))
+(define (instances tree) (cadddr tree))
+(define (pairs tree) (car (cddddr tree)))
+(define (make-lm-tree entry left right instances pairs)
+  (list entry left right instances pairs))
+
+(define (lm-tree-insert! string1 string2 tree)
+  (cond ((null? tree)
+         (make-lm-tree string1 '() '() 1 (make-lm-tree string2 '() '() 1 '())))
+
+        ((string=? string1 (entry tree))
+         (set-car! (cdddr tree) (+ 1 (instances tree))) ;;
+         (if (not (null? string2))
+             (lm-tree-insert! string2 '() (pairs tree)))) ;; string2 er null når man jobber med trærne for par
+
+        ((string<? string1 (entry tree))
+         (if (null? (left-branch tree))
+             (if (null? string2)
+                 (set-car! (cdr tree) (make-lm-tree string1 '() '() 1 '()))
+                 (set-car! (cdr tree) (make-lm-tree string1 '() '() 1 (make-lm-tree string2 '() '() 1 '()))))
+             (lm-tree-insert! string1 string2 (left-branch tree))))
+
+        ((string>? string1 (entry tree))
+          (if (null? (right-branch tree))
+              (if (null? string2)
+                 (set-car! (cddr tree) (make-lm-tree string1 '() '() 1 '()))
+                 (set-car! (cddr tree) (make-lm-tree string1 '() '() 1 (make-lm-tree string2 '() '() 1 '()))))
+              (lm-tree-insert! string1 string2 (right-branch tree))))))
+
+(define (lm-tree-lookup string1 string2 tree)
+  (cond ((null? tree) #f)
+
+        ((string=? string1 (entry tree))
+         (if (null? string2)
+             (instances tree)
+             (lm-tree-lookup string2 '() (pairs tree))))
+
+        ((string<? string1 (entry tree))
+         (lm-tree-lookup string1 string2 (left-branch tree)))
+
+        ((string>? string1 (entry tree))
+         (lm-tree-lookup string1 string2 (right-branch tree)))))
+
+(define (lm-tree-train! tree text)
+  (define (traverse-sentence sentence)
+    (if (null? (cdr sentence))
+        (lm-tree-train! tree (cdr text))
+        (let ((string1 (car sentence))
+              (string2 (cadr sentence)))
+          (lm-tree-insert! string1 string2 tree)
+          (traverse-sentence (cdr sentence)))))
+  (if (null? text)
+      '"text done"
+      (traverse-sentence (car text))))
